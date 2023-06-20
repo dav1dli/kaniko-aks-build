@@ -1,0 +1,150 @@
+# Example python project
+# The project shows how to build a container with a python service, build a helm chart for it,
+# test and scan for vulnerabilities, publish reports, set dynamic variables, pass variables between stages,
+# publish containers and helm charts to ACR and test them in a separate stage
+
+trigger: none
+
+resources:
+- repo: self
+
+parameters:
+  - name: env
+    displayName: Environment to manage
+    type: string
+    default: dev
+    values:
+    - dev
+    - uat
+    - prd
+    - poc
+    - all
+  - name: fast
+    type: boolean
+    default: true
+  - name: cleanup
+    type: boolean
+    default: false
+
+variables:
+- template: config/${{ parameters.env }}.yaml
+- name: imgtag
+  value: '$(Build.BuildId)'
+- name: reponame
+  value: 'devops-sandbox'
+- name: imgname
+  value: 'python-app'
+
+stages:
+
+# Build the app, package in a container, package helm chart, publish to ACR
+- stage: Build
+  displayName: Build image
+  pool:
+    # Use agents from DEV environment
+    name: $(AKS_AGENTS_POOL)
+  jobs:
+  - job: Build
+    displayName: Build
+    steps:
+# Prepair environment, credentials
+    - task: KubectlInstaller@0
+      displayName: "Install Kubectl"
+      inputs:
+        kubectlVersion: 'latest'
+    - task: AzureCLI@2
+      displayName: "Set ACR credentials for the account"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          ACRUSER=$(az acr credential show --name ${ACR_NAME}  --query "username")
+          echo "##vso[task.setvariable variable=ACRUSER;]$ACRUSER"
+          ACRPASS=$(az acr credential show --name ${ACR_NAME} --query "passwords[0].value")
+          echo "##vso[task.setvariable variable=ACRPASS;]$ACRPASS"
+    - task: AzureCLI@2
+      displayName: "Set Storage Account credentials"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          STRGPASS=$(az storage account keys list -g $(RESOURCE_GROUP) -n $(STORAGE_ACCOUNT_IMGBLD) --query "[0].value")
+          echo "##vso[task.setvariable variable=STRGPASS;]$STRGPASS"
+    - task: AzureCLI@2
+      displayName: "Get AKS cluster credentials"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: "az aks get-credentials --overwrite-existing --admin -n $(AKS_NAME) -g $(RESOURCE_GROUP)"
+# Run commands on k8s
+    - task: CmdLine@2
+      displayName: "Create build namespace"
+      inputs:
+        script: |
+          export KUBECONFIG="$HOME/.kube/config"
+          kubectl create ns $(imgname)-$(imgtag)
+    - task: CmdLine@2
+      displayName: "Setup ACR access secret"
+      inputs:
+        script: |
+          export KUBECONFIG="$HOME/.kube/config"
+          rm -rf $HOME/.docker/config.json
+          docker login -u $(ACRUSER) -p $(ACRPASS) $(ACR_NAME)
+          kubectl create secret generic acr-config \
+            --from-file=config.json=$HOME/.docker/config.json \
+            -o yaml --namespace=$(imgname)-$(imgtag)
+    - task: CmdLine@2
+      displayName: "Setup Storage volume access secret"
+      inputs:
+        script: |
+          export KUBECONFIG="$HOME/.kube/config"
+          kubectl create secret generic strg-config \
+            --from-literal=AZURE_STORAGE_ACCESS_KEY=$(STRGPASS) \
+            -o yaml --namespace=$(imgname)-$(imgtag)
+    - task: AzureCLI@2
+      displayName: "Upload image files to storage account"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          tar -czvf $(imgname)-${BUILD_BUILDID}.tar.gz app.py Dockerfile requirements.txt
+          az storage blob upload \
+            --account-name $(STORAGE_ACCOUNT_IMGBLD) --container-name imgbld \
+            --file $(imgname)-${BUILD_BUILDID}.tar.gz --name $(imgname)-${BUILD_BUILDID}.tar.gz
+    - task: replacetokens@5
+      inputs:
+        rootDirectory: 'devops/img-build/'
+        targetFiles: '**/*.yaml'
+        verbosity: 'detailed'
+        actionOnMissing: 'fail'
+        actionOnNoFiles: 'fail'
+    - task: CmdLine@2
+      displayName: "Start image build"
+      inputs:
+        script: |
+          export KUBECONFIG="$HOME/.kube/config"
+          kubectl create -f devops/img-build/pod.yaml -o yaml --namespace=$(imgname)-$(imgtag)
+    - task: CmdLine@2
+      displayName: "Monitor image build"
+      inputs:
+        script: |
+          sleep 5
+          export KUBECONFIG="$HOME/.kube/config"
+          kubectl logs imgbuild-$(imgtag) -n $(imgname)-$(imgtag) --follow --timestamps=true
+    - task: AzureCLI@2
+      displayName: "Cleanup resources"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          export KUBECONFIG="$HOME/.kube/config"
+          kubectl delete ns $(imgname)-${BUILD_BUILDID}
+          az storage blob delete \
+            --account-name $(STORAGE_ACCOUNT_IMGBLD) --container-name imgbld \
+            --name $(imgname)-${BUILD_BUILDID}.tar.gz
+      condition: always()

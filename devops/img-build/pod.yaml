@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: imgbuild-#{imgtag}#
+spec:
+  restartPolicy: Never
+  containers:
+  - name: kaniko-#{imgtag}#
+    args:
+    - --dockerfile=Dockerfile
+    - --context=https://#{STORAGE_ACCOUNT_IMGBLD}#.blob.core.windows.net/imgbld/#{imgname}#-#{imgtag}#.tar.gz
+    - --destination=#{ACR_NAME}#/#{reponame}#/#{imgname}#:#{imgtag}#
+    image: gcr.io/kaniko-project/executor:latest
+    volumeMounts:
+    - name: docker-config
+      mountPath: /kaniko/.docker/
+    envFrom:
+    - secretRef:
+        name: strg-config
+    resources:
+      limits:
+        cpu: 1
+        memory: 1Gi
+  volumes:
+  - name: docker-config
+    secret:
+      secretName: acr-config

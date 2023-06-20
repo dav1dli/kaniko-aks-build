@@ -1,0 +1,6 @@
+variables:
+  ACR_NAME: acrpocdl.azurecr.io
+  KV_NAME: KV-EUR-WW-POC-DL
+  SERVICE_CONNECTION: AZU-EUR-WW-POC-MP
+  RESOURCE_GROUP: RG-EUR-WW-POC-DL
+  STORAGE_ACCOUNT: sapocdltfstate

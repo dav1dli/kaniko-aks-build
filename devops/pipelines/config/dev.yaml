@@ -1,0 +1,9 @@
+variables:
+  ACR_NAME: acreurwwdevms.azurecr.io
+  KV_NAME: KV-EUR-WW-DEV-MS3
+  AKS_NAME: AKS-EUR-WW-DEV-MP
+  SERVICE_CONNECTION: AZU-EUR-WW-DEV-MP
+  RESOURCE_GROUP: RG-EUR-WW-DEV-MP
+  STORAGE_ACCOUNT: saeurwwdevmp
+  AKS_AGENTS_POOL: DEV-AKS-Agent-Pool
+  STORAGE_ACCOUNT_IMGBLD: saeurwwdevmpimgbld

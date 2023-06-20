@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: docker-config
+data:
+  config.json: |-
+    {
+      "auths": {
+            "#{ACR_NAME}#": {}
+        },
+        "credsStore": "acr"
+    }
